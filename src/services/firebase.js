@@ -1,20 +1,23 @@
-
-import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
+// Production Configuration Parameters Mapping
 const firebaseConfig = {
-  apiKey: "AIzaSyD2_EfQJL0bJ30qP9_fxCJo-HTOoJ4yTKg",
-  authDomain: "oacs-tu-f68b1.firebaseapp.com",
-  projectId: "oacs-tu-f68b1",
-  storageBucket: "oacs-tu-f68b1.firebasestorage.app",
-  messagingSenderId: "840627917923",
-  appId: "1:840627917923:web:8543fb529faf4d1c621456"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
-const app = initializeApp(firebaseConfig);
+// Singleton Safeguard Pattern: Ensures the App instance is initialized exactly once
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-export const auth = getAuth(app);         // For student/admin auth [cite: 16]
-export const db = getFirestore(app);       // Firestore Database 
-export const storage = getStorage(app);    // For document uploads [cite: 18]
+// Export unified single instances
+export const db = getFirestore(app);
+export const auth = getAuth(app);
+export const storage = getStorage(app);
+export default app;
