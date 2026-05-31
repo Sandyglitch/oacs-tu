@@ -1,113 +1,131 @@
-// src/pages/public/Register.jsx
-import React, { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-hot-toast";
-import { useAuth } from "../../context/AuthContext"; 
+import { UserPlus, User, Mail, Phone, Lock, Loader2 } from "lucide-react";
 
-// 1. Import your standard web app's database instance and Firestore methods
-import { db } from "../../services/firebase"; // Adjust this path to where your initializeApp(firebaseConfig) lives
-import { doc, setDoc } from "firebase/firestore"; 
-
-function Register() {
-  const [formData, setFormData] = useState({ name: "", email: "", password: "" });
+export default function Register() {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const { signUp } = useAuth(); 
+
+  const { registerStudent } = useAuth();
   const navigate = useNavigate();
 
-  const handleInputChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handleFormSubmit = async (e) => {
+  const handleRegister = async (e) => {
     e.preventDefault();
-    if (!formData.name || !formData.email || !formData.password) {
-      return toast.error("Please fill in all layout fields.");
-    }
+    if (!name || !email || !phone || !password) return toast.error("Please populate all fields.");
+    if (password.length < 6) return toast.error("Password must contain at least 6 characters.");
 
     setLoading(true);
     try {
-      // Step A: Create authentication account credentials
-      const userCredential = await signUp(formData.email, formData.password);
-      const authenticatedUser = userCredential.user;
-
-      // Step B: Write a flexible NoSQL document into Firestore
-      await setDoc(doc(db, "users", authenticatedUser.uid), {
-        uid: authenticatedUser.uid,
-        name: formData.name,
-        email: formData.email,
-        role: "applicant", // Defaults new accounts to applicants
-        createdAt: new Date().toISOString()
-      });
-
-      toast.success("Account documented successfully in Cloud Firestore!");
-      navigate("/applicant/dashboard"); 
+      await registerStudent(email, password, name, phone);
+      toast.success("Account created! Verification email dispatched.");
+      navigate("/student/dashboard");
     } catch (error) {
-      console.error("Registration Error:", error);
-      toast.error(error.message || "An error occurred during enrollment processing.");
+      console.error(error);
+      toast.error(error.message || "Registration failed.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-gray-900 border border-gray-800 rounded-xl p-8 shadow-2xl">
-        <h2 className="text-3xl font-extrabold text-center text-white mb-2">Create Account</h2>
-        <p className="text-sm text-gray-400 text-center mb-6">Tezpur University Counselling Hub (Firestore Mode)</p>
+    <div className="min-h-screen bg-darkBg flex items-center justify-center px-4 relative overflow-hidden">
+      <div className="absolute w-96 h-96 bg-primary/10 rounded-full blur-3xl -top-10 -left-10"></div>
+      <div className="absolute w-96 h-96 bg-accent/10 rounded-full blur-3xl -bottom-10 -right-10"></div>
 
-        <form onSubmit={handleFormSubmit} className="space-y-5">
+      <div className="w-full max-w-md bg-cardBg backdrop-blur-md border border-white/10 p-8 rounded-2xl shadow-2xl z-10">
+        <div className="text-center mb-6">
+          <h2 className="text-3xl font-extrabold tracking-tight text-white">Create Account</h2>
+          <p className="text-sm text-gray-400 mt-2">Register for Counselling Session 2026</p>
+        </div>
+
+        <form onSubmit={handleRegister} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Full Name</label>
-            <input
-              type="text"
-              name="name"
-              value={formData.name}
-              onChange={handleInputChange}
-              className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
-              placeholder="Full Name"
-            />
+            <label className="block text-sm font-medium text-textMain mb-1">Full Name</label>
+            <div className="relative">
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full bg-black/30 border border-white/10 rounded-xl py-2.5 pl-11 pr-4 text-white focus:outline-none focus:border-primary transition"
+                placeholder="Sandipan Roy"
+                required
+              />
+            </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Email Address</label>
-            <input
-              type="email"
-              name="email"
-              value={formData.email}
-              onChange={handleInputChange}
-              className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
-              placeholder="example@tu.ac.in"
-            />
+            <label className="block text-sm font-medium text-textMain mb-1">Email Address</label>
+            <div className="relative">
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full bg-black/30 border border-white/10 rounded-xl py-2.5 pl-11 pr-4 text-white focus:outline-none focus:border-primary transition"
+                placeholder="name@example.com"
+                required
+              />
+            </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Password</label>
-            <input
-              type="password"
-              name="password"
-              value={formData.password}
-              onChange={handleInputChange}
-              className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
-              placeholder="••••••••"
-            />
+            <label className="block text-sm font-medium text-textMain mb-1">Mobile Number</label>
+            <div className="relative">
+              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className="w-full bg-black/30 border border-white/10 rounded-xl py-2.5 pl-11 pr-4 text-white focus:outline-none focus:border-primary transition"
+                placeholder="Contact Number"
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-textMain mb-1">Create Password</label>
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-black/30 border border-white/10 rounded-xl py-2.5 pl-11 pr-4 text-white focus:outline-none focus:border-primary transition"
+                placeholder="Minimum 6 characters"
+                required
+              />
+            </div>
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 text-white font-bold py-3 px-4 rounded-lg transition-colors shadow-lg mt-2"
+            className="w-full mt-2 bg-gradient-to-r from-primary to-accent hover:opacity-90 text-black font-semibold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition disabled:opacity-50"
           >
-            {loading ? "Writing Document..." : "Register Now"}
+            {loading ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <>
+                <UserPlus className="w-5 h-5" /> Open Account
+              </>
+            )}
           </button>
         </form>
 
-        <p className="text-sm text-center text-gray-500 mt-6">
+        <div className="mt-6 text-center text-sm text-gray-400">
           Already registered?{" "}
-          <Link to="/login" className="text-blue-400 hover:underline">Log in here</Link>
-        </p>
+          <Link to="/login" className="text-primary hover:underline font-medium">
+            Sign In
+          </Link>
+        </div>
       </div>
     </div>
   );
 }
-
-export default Register;

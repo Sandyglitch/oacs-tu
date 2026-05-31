@@ -85,7 +85,7 @@ export default function Login() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400">Password Access Token</label>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400">Password</label>
               <input type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} className="mt-1 block w-full rounded-xl bg-black/40 border border-white/10 p-3 text-white text-sm focus:border-primary focus:outline-none" required />
             </div>
 
