@@ -41,14 +41,6 @@ export default function AdmissionForm() {
 
   const [coursePrefs, setCoursePrefs] = useState(["B.Tech CSE", "B.Tech ECE", "B.Tech ME"]);
   
-  // Staging raw binary files locally instead of generating heavy strings immediately
-  const [localFiles, setLocalFiles] = useState({
-    identityProof: null,
-    markSheet: null,
-    ageProofAdmit: null,
-    categoryCertificate: null,
-  });
-
   const [documentStrings, setDocumentStrings] = useState({
     identityProof: "",
     markSheet: "",
@@ -163,28 +155,57 @@ export default function AdmissionForm() {
     setStep(4);
   };
 
-  // Light-speed file validation staging block (Stops memory bloating)
+  // AUTOMATIC IMAGE COMPRESSOR & CONVERTER
   const handleFileConversion = (e) => {
     const file = e.target.files[0];
     const fieldName = e.target.name;
     if (!file) return;
-    
-    if (file.size > 500 * 1024) {
-      return toast.error("File size is too large. Choose an compressed image under 500KB.");
-    }
 
-    setLocalFiles((prev) => ({ ...prev, [fieldName]: file }));
-    toast.success(`${file.name} staged successfully.`);
-  };
+    const toastId = toast.loading(`Compressing and preparing ${file.name}...`);
 
-  // Helper utility converting file array buffers to string blocks sequentially
-  const processFileToString = (file) => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = (err) => reject(err);
-      reader.readAsDataURL(file);
-    });
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+
+        // Set maximum dimension constraints for documents
+        const MAX_WIDTH = 1000;
+        const MAX_HEIGHT = 1000;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Convert to JPEG at 45% quality - yields highly legible text but tiny file footprint
+        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.45);
+
+        setDocumentStrings((prev) => ({ ...prev, [fieldName]: compressedBase64 }));
+        toast.dismiss(toastId);
+        toast.success(`${file.name} optimized successfully.`);
+      };
+    };
+    reader.onerror = () => {
+      toast.dismiss(toastId);
+      toast.error("Failed to read file.");
+    };
   };
 
   const movePreference = (index, direction) => {
@@ -199,17 +220,13 @@ export default function AdmissionForm() {
     e.preventDefault();
     if (!isFormOpen) return toast.error("Submission blocked. Registration timeline has closed.");
     
-    // Check local files or pre-existing strings to confirm records exist
-    const hasId = localFiles.identityProof || documentStrings.identityProof;
-    const hasMarksheet = localFiles.markSheet || documentStrings.markSheet;
-    const hasAge = localFiles.ageProofAdmit || documentStrings.ageProofAdmit;
-
-    if (!hasId || !hasMarksheet || !hasAge) {
+    // Check local string records to confirm files exist
+    if (!documentStrings.identityProof || !documentStrings.markSheet || !documentStrings.ageProofAdmit) {
       return toast.error("Please attach all mandatory verification records.");
     }
 
     setLoading(true);
-    const processToastId = toast.loading("Processing system metrics... parsing files safely.");
+    const processToastId = toast.loading("Saving optimized application data to database...");
 
     try {
       let finalAppId = existingAppId;
@@ -222,14 +239,6 @@ export default function AdmissionForm() {
           await deleteDoc(doc(db, "applications", `TU-${currentUser.uid}`));
         } catch (e) {}
       }
-
-      // Convert files sequentially right before database call to prevent memory freezes
-      const finalizedDocuments = { ...documentStrings };
-      
-      if (localFiles.identityProof) finalizedDocuments.identityProof = await processFileToString(localFiles.identityProof);
-      if (localFiles.markSheet) finalizedDocuments.markSheet = await processFileToString(localFiles.markSheet);
-      if (localFiles.ageProofAdmit) finalizedDocuments.ageProofAdmit = await processFileToString(localFiles.ageProofAdmit);
-      if (localFiles.categoryCertificate) finalizedDocuments.categoryCertificate = await processFileToString(localFiles.categoryCertificate);
 
       const payload = {
         applicationId: finalAppId,
@@ -256,7 +265,7 @@ export default function AdmissionForm() {
         preferences: coursePrefs,
         status: "pending",
         paymentStatus: "paid",
-        documents: finalizedDocuments,
+        documents: documentStrings, // Now securely well under the 1MB limit combined!
         submittedAt: new Date().toISOString(),
         counsellingStatus: "none",
         allotedSeat: "none",
@@ -264,7 +273,7 @@ export default function AdmissionForm() {
 
       await setDoc(doc(db, "applications", finalAppId), payload);
       toast.dismiss(processToastId);
-      toast.success("Application metrics updated safely!");
+      toast.success("Application portfolio submitted successfully on localhost!");
       navigate("/applicant/dashboard");
     } catch (error) {
       toast.dismiss(processToastId);
@@ -406,7 +415,7 @@ export default function AdmissionForm() {
                   </div>
                   <div>
                     <label className="block text-[11px] mb-1 text-gray-400">Education Board Council</label>
-                    <input type="text" placeholder="e.g. SEBA, CBSE" name="class10Board" value={formData.class10Board} onChange={handleInputChange} className="w-full bg-black/30 border border-white/10 rounded-lg p-2 text-white text-sm focus:outline-none" required />
+                    <input type="text" placeholder="e.g. SEBA, CBSE" name="class10Board" onChange={handleInputChange} value={formData.class10Board} className="w-full bg-black/30 border border-white/10 rounded-lg p-2 text-white text-sm focus:outline-none" required />
                   </div>
                   <div>
                     <label className="block text-[11px] mb-1 text-gray-400">Year of Passing</label>
@@ -507,22 +516,22 @@ export default function AdmissionForm() {
                 <div className="p-4 bg-black/20 border border-white/5 rounded-xl">
                   <label className="block text-[11px] font-bold text-gray-400 mb-2 uppercase">1. Government Identity Voucher</label>
                   <input type="file" name="identityProof" accept="image/*" onChange={handleFileConversion} className="text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-white/10 file:text-white" required={!isUpdateMode} />
-                  {(localFiles.identityProof || documentStrings.identityProof) && <p className="text-[10px] text-green-400 mt-1">✓ File ready for generation</p>}
+                  {documentStrings.identityProof && <p className="text-[10px] text-green-400 mt-1">✓ Image auto-compressed</p>}
                 </div>
                 <div className="p-4 bg-black/20 border border-white/5 rounded-xl">
                   <label className="block text-[11px] font-bold text-gray-400 mb-2 uppercase">2. Class 10 Admit Card (Age Proof)</label>
                   <input type="file" name="ageProofAdmit" accept="image/*" onChange={handleFileConversion} className="text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-white/10 file:text-white" required={!isUpdateMode} />
-                  {(localFiles.ageProofAdmit || documentStrings.ageProofAdmit) && <p className="text-[10px] text-green-400 mt-1">✓ File ready for generation</p>}
+                  {documentStrings.ageProofAdmit && <p className="text-[10px] text-green-400 mt-1">✓ Image auto-compressed</p>}
                 </div>
                 <div className="p-4 bg-black/20 border border-white/5 rounded-xl">
                   <label className="block text-[11px] font-bold text-gray-400 mb-2 uppercase">3. Qualifying Board Marksheet</label>
                   <input type="file" name="markSheet" accept="image/*" onChange={handleFileConversion} className="text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-white/10 file:text-white" required={!isUpdateMode} />
-                  {(localFiles.markSheet || documentStrings.markSheet) && <p className="text-[10px] text-green-400 mt-1">✓ File ready for generation</p>}
+                  {documentStrings.markSheet && <p className="text-[10px] text-green-400 mt-1">✓ Image auto-compressed</p>}
                 </div>
                 <div className="p-4 bg-black/20 border border-white/5 rounded-xl">
                   <label className="block text-[11px] font-bold text-gray-400 mb-2 uppercase">4. Category Certificate (Optional)</label>
                   <input type="file" name="categoryCertificate" accept="image/*" onChange={handleFileConversion} className="text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-white/10 file:text-white" />
-                  {(localFiles.categoryCertificate || documentStrings.categoryCertificate) && <p className="text-[10px] text-green-400 mt-1">✓ File ready for generation</p>}
+                  {documentStrings.categoryCertificate && <p className="text-[10px] text-green-400 mt-1">✓ Image auto-compressed</p>}
                 </div>
               </div>
 
