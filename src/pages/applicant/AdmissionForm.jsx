@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
-import { db, storage } from "../../services/firebase"; // Imported storage instance
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; // Imported storage hooks
+import { db } from "../../services/firebase";
 import { collection, query, where, getDocs, setDoc, doc, deleteDoc, onSnapshot } from "firebase/firestore";
 import { toast } from "react-hot-toast";
 import { User, BookOpen, Upload, Loader2, ArrowRight, ArrowLeft, CheckCircle, AlertCircle, GraduationCap } from "lucide-react";
@@ -42,15 +41,14 @@ export default function AdmissionForm() {
 
   const [coursePrefs, setCoursePrefs] = useState(["B.Tech CSE", "B.Tech ECE", "B.Tech ME"]);
   
-  // Track local File objects selected by the applicant
-  const [selectedFiles, setSelectedFiles] = useState({
+  // Staging raw binary files locally instead of generating heavy strings immediately
+  const [localFiles, setLocalFiles] = useState({
     identityProof: null,
     markSheet: null,
     ageProofAdmit: null,
     categoryCertificate: null,
   });
 
-  // Keep track of existing remote storage URLs (populated when in Update Mode)
   const [documentStrings, setDocumentStrings] = useState({
     identityProof: "",
     markSheet: "",
@@ -120,7 +118,7 @@ export default function AdmissionForm() {
   const handleInputChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
   const handleBack = () => setStep((prev) => prev - 1);
 
-  //🛡️ STEP VALIDATION SAFEGUARDS
+  // 🛡️ STEP VALIDATION SAFEGUARDS
   const isStep1Valid = () => {
     return (
       formData.fullName.trim() !== "" &&
@@ -155,7 +153,7 @@ export default function AdmissionForm() {
 
   const handleNextStep2 = () => {
     if (!isStep2Valid()) {
-      toast.error("All academic merits and indicators are required to proceed.");
+      toast.error("All academic marks and boards are required to proceed.");
       return;
     }
     setStep(3);
@@ -165,18 +163,28 @@ export default function AdmissionForm() {
     setStep(4);
   };
 
-  // Safely captures local files without creating laggy base64 block limits
-  const handleFileSelection = (e) => {
+  // Light-speed file validation staging block (Stops memory bloating)
+  const handleFileConversion = (e) => {
     const file = e.target.files[0];
     const fieldName = e.target.name;
     if (!file) return;
-
-    if (file.size > 2 * 1024 * 1024) {
-      return toast.error("File size limits exceeded. Document must be under 2MB.");
+    
+    if (file.size > 500 * 1024) {
+      return toast.error("File size is too large. Choose an compressed image under 500KB.");
     }
 
-    setSelectedFiles((prev) => ({ ...prev, [fieldName]: file }));
+    setLocalFiles((prev) => ({ ...prev, [fieldName]: file }));
     toast.success(`${file.name} staged successfully.`);
+  };
+
+  // Helper utility converting file array buffers to string blocks sequentially
+  const processFileToString = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
   };
 
   const movePreference = (index, direction) => {
@@ -190,21 +198,22 @@ export default function AdmissionForm() {
   const handleSubmitApplication = async (e) => {
     e.preventDefault();
     if (!isFormOpen) return toast.error("Submission blocked. Registration timeline has closed.");
+    
+    // Check local files or pre-existing strings to confirm records exist
+    const hasId = localFiles.identityProof || documentStrings.identityProof;
+    const hasMarksheet = localFiles.markSheet || documentStrings.markSheet;
+    const hasAge = localFiles.ageProofAdmit || documentStrings.ageProofAdmit;
 
-    // Strict baseline check balancing new entries vs updates
-    const hasIdentity = selectedFiles.identityProof || documentStrings.identityProof;
-    const hasMarksheet = selectedFiles.markSheet || documentStrings.markSheet;
-    const hasAgeProof = selectedFiles.ageProofAdmit || documentStrings.ageProofAdmit;
-
-    if (!hasIdentity || !hasMarksheet || !hasAgeProof) {
+    if (!hasId || !hasMarksheet || !hasAge) {
       return toast.error("Please attach all mandatory verification records.");
     }
 
     setLoading(true);
-    const executionToast = toast.loading("Processing document storage and registration handles...");
+    const processToastId = toast.loading("Processing system metrics... parsing files safely.");
 
     try {
       let finalAppId = existingAppId;
+
       if (!finalAppId || finalAppId.includes("-") || finalAppId.length !== 12) {
         const uniqueDigits = Math.floor(1000000000 + Math.random() * 9000000000);
         finalAppId = `TU${uniqueDigits}`;
@@ -214,21 +223,13 @@ export default function AdmissionForm() {
         } catch (e) {}
       }
 
-      // 🚀 PROCESS BINARY STORAGE UPLOADS TO THE CLOUD VIA ASYNC PROMISES
-      let activeUrls = { ...documentStrings };
-
-      const uploadTasks = Object.keys(selectedFiles).map(async (key) => {
-        const fileObj = selectedFiles[key];
-        if (fileObj) {
-          const fileRef = ref(storage, `admission_vault/${currentUser.uid}-${key}`);
-          const snapshot = await uploadBytes(fileRef, fileObj);
-          const cloudUrl = await getDownloadURL(snapshot.ref);
-          activeUrls[key] = cloudUrl;
-        }
-      });
-
-      // Wait for all uploads to complete fully before touching the database
-      await Promise.all(uploadTasks);
+      // Convert files sequentially right before database call to prevent memory freezes
+      const finalizedDocuments = { ...documentStrings };
+      
+      if (localFiles.identityProof) finalizedDocuments.identityProof = await processFileToString(localFiles.identityProof);
+      if (localFiles.markSheet) finalizedDocuments.markSheet = await processFileToString(localFiles.markSheet);
+      if (localFiles.ageProofAdmit) finalizedDocuments.ageProofAdmit = await processFileToString(localFiles.ageProofAdmit);
+      if (localFiles.categoryCertificate) finalizedDocuments.categoryCertificate = await processFileToString(localFiles.categoryCertificate);
 
       const payload = {
         applicationId: finalAppId,
@@ -255,18 +256,18 @@ export default function AdmissionForm() {
         preferences: coursePrefs,
         status: "pending",
         paymentStatus: "paid",
-        documents: activeUrls, // Secure Firebase Storage URLs passed safely here
+        documents: finalizedDocuments,
         submittedAt: new Date().toISOString(),
         counsellingStatus: "none",
         allotedSeat: "none",
       };
 
       await setDoc(doc(db, "applications", finalAppId), payload);
-      toast.dismiss(executionToast);
+      toast.dismiss(processToastId);
       toast.success("Application metrics updated safely!");
       navigate("/applicant/dashboard");
     } catch (error) {
-      toast.dismiss(executionToast);
+      toast.dismiss(processToastId);
       console.error(error);
       toast.error("Failed to commit application parameters.");
     } finally {
@@ -443,7 +444,7 @@ export default function AdmissionForm() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[11px] mb-1 text-gray-400">Entrance Score Value (Percentile Index)</label>
+                    <label className="block text-[11px] mb-1 text-gray-400">Entrance Score Value (Percentile Rank Index)</label>
                     <input type="number" step="0.00001" placeholder="e.g. 96.425" name="entranceScore" value={formData.entranceScore} onChange={handleInputChange} className="w-full bg-black/30 border border-white/10 rounded-lg p-2 text-white text-sm focus:outline-none" required />
                   </div>
                 </div>
@@ -505,23 +506,23 @@ export default function AdmissionForm() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="p-4 bg-black/20 border border-white/5 rounded-xl">
                   <label className="block text-[11px] font-bold text-gray-400 mb-2 uppercase">1. Government Identity Voucher</label>
-                  <input type="file" name="identityProof" accept="image/*,application/pdf" onChange={handleFileSelection} className="text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-white/10 file:text-white" required={!isUpdateMode} />
-                  {documentStrings.identityProof && <p className="text-[10px] text-green-400 mt-1">✓ Cloud record stored</p>}
+                  <input type="file" name="identityProof" accept="image/*" onChange={handleFileConversion} className="text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-white/10 file:text-white" required={!isUpdateMode} />
+                  {(localFiles.identityProof || documentStrings.identityProof) && <p className="text-[10px] text-green-400 mt-1">✓ File ready for generation</p>}
                 </div>
                 <div className="p-4 bg-black/20 border border-white/5 rounded-xl">
                   <label className="block text-[11px] font-bold text-gray-400 mb-2 uppercase">2. Class 10 Admit Card (Age Proof)</label>
-                  <input type="file" name="ageProofAdmit" accept="image/*,application/pdf" onChange={handleFileSelection} className="text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-white/10 file:text-white" required={!isUpdateMode} />
-                  {documentStrings.ageProofAdmit && <p className="text-[10px] text-green-400 mt-1">✓ Cloud record stored</p>}
+                  <input type="file" name="ageProofAdmit" accept="image/*" onChange={handleFileConversion} className="text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-white/10 file:text-white" required={!isUpdateMode} />
+                  {(localFiles.ageProofAdmit || documentStrings.ageProofAdmit) && <p className="text-[10px] text-green-400 mt-1">✓ File ready for generation</p>}
                 </div>
                 <div className="p-4 bg-black/20 border border-white/5 rounded-xl">
                   <label className="block text-[11px] font-bold text-gray-400 mb-2 uppercase">3. Qualifying Board Marksheet</label>
-                  <input type="file" name="markSheet" accept="image/*,application/pdf" onChange={handleFileSelection} className="text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-white/10 file:text-white" required={!isUpdateMode} />
-                  {documentStrings.markSheet && <p className="text-[10px] text-green-400 mt-1">✓ Cloud record stored</p>}
+                  <input type="file" name="markSheet" accept="image/*" onChange={handleFileConversion} className="text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-white/10 file:text-white" required={!isUpdateMode} />
+                  {(localFiles.markSheet || documentStrings.markSheet) && <p className="text-[10px] text-green-400 mt-1">✓ File ready for generation</p>}
                 </div>
                 <div className="p-4 bg-black/20 border border-white/5 rounded-xl">
                   <label className="block text-[11px] font-bold text-gray-400 mb-2 uppercase">4. Category Certificate (Optional)</label>
-                  <input type="file" name="categoryCertificate" accept="image/*,application/pdf" onChange={handleFileSelection} className="text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-white/10 file:text-white" />
-                  {documentStrings.categoryCertificate && <p className="text-[10px] text-green-400 mt-1">✓ Cloud record stored</p>}
+                  <input type="file" name="categoryCertificate" accept="image/*" onChange={handleFileConversion} className="text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-white/10 file:text-white" />
+                  {(localFiles.categoryCertificate || documentStrings.categoryCertificate) && <p className="text-[10px] text-green-400 mt-1">✓ File ready for generation</p>}
                 </div>
               </div>
 
