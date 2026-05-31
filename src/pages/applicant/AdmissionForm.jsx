@@ -3,18 +3,20 @@ import React, { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
 import { useAuth } from "../../context/AuthContext";
 
-// Import standard Firestore hooks
-import { db } from "../../services/firebase";
+// Import standard Firestore and Storage hooks
+import { db, storage } from "../../services/firebase";
 import { collection, getDocs, doc, setDoc } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 function AdmissionForm() {
   const { currentUser } = useAuth();
   const [courses, setCourses] = useState([]);
   const [academicScore, setAcademicScore] = useState("");
-  const [preferences, setPreferences] = useState(["", "", ""]); 
+  const [preferences, setPreferences] = useState(["", "", ""]);
+  const [file, setFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // hardcoded fallback list just in case your backend collections aren't seeded yet
+  // Tezpur University baseline branches fallback matrix
   const STATIC_BRANCHES = [
     { id: "BTECH_CSE", name: "Computer Science & Engineering", remainingSeats: 60 },
     { id: "BTECH_ECE", name: "Electronics & Communication Engineering", remainingSeats: 50 },
@@ -24,12 +26,10 @@ function AdmissionForm() {
   ];
 
   useEffect(() => {
-    // Try to pull current vacancies from a Firestore collection named 'courses'
     const fetchCourses = async () => {
       try {
         const querySnapshot = await getDocs(collection(db, "courses"));
         if (querySnapshot.empty) {
-          // If Firestore is empty right now, fall back to our local list
           setCourses(STATIC_BRANCHES);
         } else {
           const list = [];
@@ -37,7 +37,7 @@ function AdmissionForm() {
           setCourses(list);
         }
       } catch (err) {
-        console.warn("Firestore collection empty or inaccessible, using default branch layout matrix:", err);
+        console.warn("Using baseline branch matrix fallback:", err);
         setCourses(STATIC_BRANCHES);
       }
     };
@@ -50,32 +50,51 @@ function AdmissionForm() {
     setPreferences(updated);
   };
 
+  const handleFileChange = (e) => {
+    if (e.target.files[0]) {
+      setFile(e.target.files[0]);
+    }
+  };
+
   const handleFormSubmit = async (e) => {
     e.preventDefault();
     if (!academicScore || preferences.some((p) => p === "")) {
-      return toast.error("Please fill out your aggregate percentage and all 3 branch rankings.");
+      return toast.error("Please fill out your qualifying score and all 3 branch rankings.");
     }
 
     setSubmitting(true);
     const applicationUniqueId = `APP-${Date.now()}-${currentUser.uid.slice(0, 4)}`.toUpperCase();
 
     try {
-      // Push the entire document object block straight into a single Firestore document!
+      let documentUrl = "";
+
+      // Handle mark sheet file upload if provided
+      if (file) {
+        const fileRef = ref(storage, `marksheets/${currentUser.uid}/${applicationUniqueId}_${file.name}`);
+        const uploadSnapshot = await uploadBytes(fileRef, file);
+        documentUrl = await getDownloadURL(uploadSnapshot.ref);
+      }
+
+      // Commit the complete registration form bundle to Firestore
       await setDoc(doc(db, "applications", applicationUniqueId), {
         applicationId: applicationUniqueId,
         studentId: currentUser.uid,
         academicScore: parseFloat(academicScore),
-        choicesArray: preferences, // Clean, nested string array ordering choice 1, 2, and 3
+        choicesArray: preferences, 
+        marksheetUrl: documentUrl,
         status: "pending",
         paymentStatus: "pending",
         allotedSeat: "",
         submittedAt: new Date().toISOString()
       });
 
-      toast.success(`Application Document ${applicationUniqueId} filed successfully!`);
+      toast.success(`Application ${applicationUniqueId} submitted successfully!`);
+      setAcademicScore("");
+      setPreferences(["", "", ""]);
+      setFile(null);
     } catch (error) {
-      console.error("Firestore Writing Error:", error);
-      toast.error("Failed to write document parameters to Cloud Firestore.");
+      console.error("Form Submission Error:", error);
+      toast.error("Failed to submit application data to the database cloud.");
     } finally {
       setSubmitting(false);
     }
@@ -85,9 +104,10 @@ function AdmissionForm() {
     <div className="min-h-screen bg-gray-950 text-white p-8">
       <div className="max-w-2xl mx-auto bg-gray-900 border border-gray-800 rounded-xl p-8 shadow-2xl">
         <h2 className="text-2xl font-bold mb-2">Centralized B.Tech Admission Application</h2>
-        <p className="text-gray-400 text-sm mb-6">Firestore NoSQL Stack Engine Mode</p>
+        <p className="text-gray-400 text-sm mb-6">Enter your academic details, rank your course choices, and upload your verification documents.</p>
 
         <form onSubmit={handleFormSubmit} className="space-y-6">
+          {/* Section 1: Academic Input Metrics */}
           <div>
             <label className="block text-sm font-semibold text-gray-300 mb-2">Aggregate Qualifying Score (%)</label>
             <input
@@ -95,13 +115,25 @@ function AdmissionForm() {
               step="0.01"
               value={academicScore}
               onChange={(e) => setAcademicScore(e.target.value)}
-              className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
+              className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-colors"
               placeholder="e.g., 92.45"
+            />
+          </div>
+
+          {/* Section 2: Document Upload Field */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-300 mb-2">Upload Qualifying Marksheet (PDF/Image)</label>
+            <input
+              type="file"
+              onChange={handleFileChange}
+              accept="image/*,application/pdf"
+              className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-gray-800 file:text-gray-200 hover:file:bg-gray-700 cursor-pointer"
             />
           </div>
 
           <hr className="border-gray-800 my-6" />
 
+          {/* Section 3: Ordered Branch Preference Rankings */}
           <h3 className="text-lg font-semibold text-blue-400">Branch Preference Rankings</h3>
           
           {preferences.map((pref, index) => (
@@ -112,7 +144,7 @@ function AdmissionForm() {
               <select
                 value={pref}
                 onChange={(e) => handlePreferenceChange(index, e.target.value)}
-                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-colors"
               >
                 <option value="">Select an engineering branch stream...</option>
                 {courses.map((course) => (
@@ -127,9 +159,9 @@ function AdmissionForm() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full bg-green-600 hover:bg-green-500 disabled:bg-gray-800 text-white font-bold py-3 rounded-lg shadow-lg"
+            className="w-full bg-green-600 hover:bg-green-500 disabled:bg-gray-800 text-white font-bold py-3 rounded-lg shadow-lg transition-all transform active:scale-[0.99]"
           >
-            {submitting ? "Writing Application Document..." : "Submit Application Form"}
+            {submitting ? "Processing Submission & Uploading Files..." : "Submit Application Blueprint"}
           </button>
         </form>
       </div>
